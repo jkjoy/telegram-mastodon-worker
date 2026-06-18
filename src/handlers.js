@@ -1,6 +1,6 @@
 import { VALID_VISIBILITIES, SESSION_TTL_SECONDS, TIMELINE_ITEM_TTL_SECONDS } from './constants.js';
 import { parseBindArgs, defaultMastodonInstance, resolveMastodonConfig, publishMastodonStatus, fetchMastodonNotifications, fetchHomeTimeline, reblogMastodonStatus, favouriteMastodonStatus } from './mastodon.js';
-import { getKV, mastodonConfigKey, mastodonConfigKeyFromIds, bindSessionKey, pendingPostKey, putSession, replyItemKey, replySessionKey, timelineSubscriberKey, timelineItemKey } from './storage.js';
+import { getKV, mastodonConfigKey, mastodonConfigKeyFromIds, bindSessionKey, pendingPostKey, putSession, replyItemKey, replySessionKey, timelineSubscriberKey, timelineItemKey, timelineSeenKey } from './storage.js';
 import { answerCallbackQuery, helpText, sendBindMenu, sendTelegramMessage, sendVisibilityMenu } from './telegram.js';
 import { buildStatus, safeErrorMessage, json } from './utils.js';
 
@@ -122,6 +122,9 @@ export async function handleTimelineOn(fetchFn, env, message) {
   const userId = message.from.id;
   const subscriber = { userId, chatId: message.chat.id, lastId: latest[0]?.id || null, enabled: true };
   await env.CONFIG_KV.put(timelineSubscriberKey(userId), JSON.stringify(subscriber));
+  if (subscriber.lastId) {
+    await env.CONFIG_KV.put(timelineSeenKey(userId, subscriber.lastId), '1', { expirationTtl: TIMELINE_ITEM_TTL_SECONDS });
+  }
   const subscribers = await getTimelineSubscribers(env);
   if (!subscribers.includes(userId)) subscribers.push(userId);
   await env.CONFIG_KV.put('timeline:subscribers', JSON.stringify(subscribers));
@@ -160,14 +163,20 @@ export async function handleTimelineCron(fetchFn, env) {
     const newStatuses = [];
     for (const status of statuses) {
       if (subscriber.lastId && status.id === subscriber.lastId) break;
+      const seen = await env.CONFIG_KV.get(timelineSeenKey(userId, status.id));
+      if (seen) continue;
       newStatuses.push(status);
     }
     const ordered = newStatuses.reverse().slice(0, 3);
-    for (const status of ordered) {
-      await pushTimelineStatus(fetchFn, env, subscriber, status);
-    }
     if (statuses[0]?.id && statuses[0].id !== subscriber.lastId) {
       await env.CONFIG_KV.put(timelineSubscriberKey(userId), JSON.stringify({ ...subscriber, lastId: statuses[0].id }));
+    }
+    for (const status of ordered) {
+      try {
+        await pushTimelineStatus(fetchFn, env, subscriber, status);
+      } catch (error) {
+        console.warn('timeline push failed', { userId, statusId: status.id, message: safeErrorMessage(error) });
+      }
     }
   }
 }
@@ -177,6 +186,7 @@ async function pushTimelineStatus(fetchFn, env, subscriber, status) {
   const text = stripHtml(status.content || '').trim();
   const item = { statusId: status.id, acct, visibility: status.visibility || 'public', url: status.url || '' };
   await env.CONFIG_KV.put(timelineItemKey(subscriber.userId, status.id), JSON.stringify(item), { expirationTtl: TIMELINE_ITEM_TTL_SECONDS });
+  await env.CONFIG_KV.put(timelineSeenKey(subscriber.userId, status.id), '1', { expirationTtl: TIMELINE_ITEM_TTL_SECONDS });
   await sendTelegramMessage(fetchFn, env, subscriber.chatId, `@${acct}\n\n${text || '(空内容)'}`.trim(), null, {
     inline_keyboard: [[
       { text: '回复', callback_data: `tl_reply:${status.id}` },

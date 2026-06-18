@@ -514,6 +514,7 @@ describe('telegram to mastodon worker', () => {
       JSON.stringify({ userId: 42, chatId: 42, lastId: 'old1', enabled: true })
     );
     expect(env.CONFIG_KV.put).toHaveBeenCalledWith('timeline:subscribers', JSON.stringify([42]));
+    expect(env.CONFIG_KV.put).toHaveBeenCalledWith('timeline:seen:42:old1', '1', { expirationTtl: 604800 });
     const sendCall = fetchMock.mock.calls.find(([url]) => url.includes('/sendMessage'));
     expect(JSON.parse(sendCall[1].body).text).toContain('已开启时间线推送');
   });
@@ -550,6 +551,33 @@ describe('telegram to mastodon worker', () => {
       { expirationTtl: 604800 }
     );
     expect(env.CONFIG_KV.put).toHaveBeenCalledWith('timeline:subscriber:42', JSON.stringify({ userId: 42, chatId: 42, lastId: 'new1', enabled: true }));
+    expect(env.CONFIG_KV.put).toHaveBeenCalledWith('timeline:seen:42:new1', '1', { expirationTtl: 604800 });
+  });
+
+
+  it('updates timeline cursor even if Telegram push fails so cron will not resend forever', async () => {
+    const env = envWithKV({
+      'timeline:subscribers': JSON.stringify([42]),
+      'timeline:subscriber:42': JSON.stringify({ userId: 42, chatId: 42, lastId: 'old1', enabled: true }),
+      'mastodon:user:42': JSON.stringify({ instance: 'https://social.example', accessToken: 'user-token', visibility: 'unlisted' }),
+    });
+    const fetchMock = vi.fn(async (url) => {
+      if (url === 'https://social.example/api/v1/timelines/home?limit=5') {
+        return new Response(JSON.stringify([
+          { id: 'new-fail', content: '<p>新嘟文</p>', account: { acct: 'alice@example.com' }, url: 'https://social.example/@alice/new-fail', visibility: 'public' },
+          { id: 'old1', content: '<p>旧嘟文</p>', account: { acct: 'bob' }, url: 'https://social.example/@bob/old1', visibility: 'public' },
+        ]), { status: 200 });
+      }
+      if (String(url).includes('/sendMessage')) {
+        return new Response(JSON.stringify({ ok: false, description: 'chat not found' }), { status: 403 });
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+
+    await worker.scheduled({}, env, { waitUntil: (promise) => promise }, { fetch: fetchMock });
+
+    expect(env.CONFIG_KV.put).toHaveBeenCalledWith('timeline:subscriber:42', JSON.stringify({ userId: 42, chatId: 42, lastId: 'new-fail', enabled: true }));
+    expect(env.CONFIG_KV.put).toHaveBeenCalledWith('timeline:seen:42:new-fail', '1', { expirationTtl: 604800 });
   });
 
   it('boosts a timeline status when the boost button is clicked', async () => {

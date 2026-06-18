@@ -40,6 +40,10 @@ export function timelineItemKey(userId, statusId) {
   return `timeline:item:${userId}:${statusId}`;
 }
 
+export function timelineSeenKey(userId, statusId) {
+  return `timeline:seen:${userId}:${statusId}`;
+}
+
 export async function putSession(env, key, value) {
   await getKV(env).put(key, JSON.stringify(value), { expirationTtl: SESSION_TTL_SECONDS });
 }
