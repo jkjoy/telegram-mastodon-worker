@@ -5,7 +5,7 @@ import { answerCallbackQuery, helpText, sendBindMenu, sendTelegramMessage, sendV
 import { buildStatus, safeErrorMessage, json } from './utils.js';
 
 export async function handlePing(fetchFn, env, message) {
-  await sendTelegramMessage(fetchFn, env, message.chat.id, 'pong', message.message_id);
+  await sendTelegramMessage(fetchFn, env, message.chat.id, '机器人正常运行 ✅', message.message_id);
   return json({ ok: true, action: 'pong' });
 }
 

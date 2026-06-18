@@ -78,7 +78,7 @@ describe('telegram to mastodon worker', () => {
     expect(payload.ok).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe('https://api.telegram.org/bot123:test-token/sendMessage');
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ chat_id: 42, text: 'pong' });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ chat_id: 42, text: '机器人正常运行 ✅' });
   });
 
   it('rejects non-private Telegram messages', async () => {
